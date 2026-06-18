@@ -661,6 +661,12 @@ function fillProfile(body, profile) {
   if (profile.cypInducer.length) {
     cypVal.appendChild(el("div", null, [el("span", { class: "cyp-tag" }, "Inducer"), document.createTextNode(" " + profile.cypInducer.join(", "))]));
   }
+  // Absence of data, not absence of the property: RxClass CYP coverage is
+  // incomplete (e.g. it has no inhibitor/inducer class for rifampin or
+  // fluoxetine), so make that explicit rather than silently omitting the line.
+  if (!profile.cypInhibitor.length && !profile.cypInducer.length) {
+    cypVal.appendChild(el("div", null, [el("span", { class: "cyp-tag" }, "Inhibitor / inducer"), document.createTextNode(" none recorded in RxClass (coverage is incomplete)")]));
+  }
   cypRow.appendChild(cypVal);
   body.appendChild(cypRow);
 }
