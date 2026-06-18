@@ -46,7 +46,11 @@
             <button type="button" id="add-drug">Add another drug</button>
             <button type="submit" id="check" class="btn-primary">Check interactions</button>
           </div>
-          <p class="hint">Suggestions from RxNorm appear as you type; you can also type any name freely. Brand names work too (e.g. Coumadin). Examples: warfarin, aspirin, fluconazole, ibuprofen, simvastatin.</p>
+          <p class="hint">Suggestions from RxNorm appear as you type; you can also type any name freely. Brand names work too (e.g. Coumadin).</p>
+          <div class="examples">
+            <span class="hint">Try an example:</span>
+            <span id="example-chips" class="example-chips"></span>
+          </div>
         </form>
 
         <p id="status" class="status" role="status" aria-live="polite"></p>

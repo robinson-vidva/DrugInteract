@@ -19,6 +19,8 @@
   --state-nolabel-bg: #f0ecfa;
   --state-unrecognized: #9a6700; /* not recognized by RxNorm */
   --state-unrecognized-bg: #fdf3df;
+  --state-ratelimit: #c2410c;    /* API rate limit (HTTP 429) */
+  --state-ratelimit-bg: #fde7d6;
   --state-error: #57606a;
   --state-error-bg: #f0f2f5;
 
@@ -41,6 +43,7 @@
     --state-nomention: #adbac7;   --state-nomention-bg: #1b2230;
     --state-nolabel: #b29df0;     --state-nolabel-bg: #1f1a2e;
     --state-unrecognized: #e3b341; --state-unrecognized-bg: #251f10;
+    --state-ratelimit: #ff9e6d;    --state-ratelimit-bg: #2a1a10;
     --state-error: #9198a1;        --state-error-bg: #1c2330;
   }
 }
@@ -153,6 +156,23 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .hint { color: var(--text-muted); font-size: 0.88rem; }
 
+/* Example chips */
+.examples { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; margin-top: 12px; }
+.example-chips { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  font-size: 0.86rem;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); }
+
+/* Inline note (e.g. pairwise-only caveat near results) */
+.note { font-size: 0.9rem; color: var(--text-muted); margin: 0 0 14px; }
+
 /* Status / spinner */
 .status { margin: 14px 0; color: var(--text-muted); min-height: 1.2em; }
 
@@ -193,6 +213,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pair.s-nolabel .badge { background: var(--state-nolabel-bg); color: var(--state-nolabel); }
 .pair.s-unrecognized { border-left-color: var(--state-unrecognized); }
 .pair.s-unrecognized .badge { background: var(--state-unrecognized-bg); color: var(--state-unrecognized); }
+.pair.s-ratelimit { border-left-color: var(--state-ratelimit); }
+.pair.s-ratelimit .badge { background: var(--state-ratelimit-bg); color: var(--state-ratelimit); }
 .pair.s-error { border-left-color: var(--state-error); }
 .pair.s-error .badge { background: var(--state-error-bg); color: var(--state-error); }
 

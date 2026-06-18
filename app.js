@@ -9,7 +9,7 @@ const OPENFDA = "https://api.fda.gov/drug/label.json";
 
 const LABEL_CAP = 100;     // most-recent labels searched per drug
 const SNIPPET_RADIUS = 200; // chars of context on each side of a match
-const MIN_NAME_LEN = 4;     // shortest name allowed as a text matcher
+const MIN_NAME_LEN = 3;     // shortest name allowed as a text matcher
 const MAX_CONCURRENCY = 4;  // polite parallelism for API calls
 
 // Names too generic to use as matchers (would cause false hits in label text).
@@ -21,10 +21,10 @@ const NAME_STOPWORDS = new Set([
 
 // In-memory session caches.
 const normalizeCache = new Map(); // input(lower) -> normalize result
-const labelCache = new Map();     // ingredientName(lower) -> labels result
+const labelCache = new Map();     // ingredient-names key -> labels result
+const suggestCache = new Map();   // query(lower) -> string[] suggestions
 
 let inputSeq = 0;                 // unique ids for input/listbox pairs
-let drugTermsPromise = null;      // cached promise of the autocomplete term list
 
 // ---------- small utilities ----------
 
@@ -82,6 +82,7 @@ async function mapLimit(items, limit, fn) {
 async function getJson(url) {
   const res = await fetch(url, { headers: { "Accept": "application/json" } });
   if (res.status === 404) return { __notFound: true };
+  if (res.status === 429) { const e = new Error("RATE_LIMIT"); e.rateLimit = true; throw e; }
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
@@ -100,7 +101,8 @@ async function normalizeDrug(input) {
     ingredientNames: [],
     names: new Set(),       // names used to find THIS drug inside another's text
     suggestions: [],
-    error: null
+    error: null,
+    rateLimited: false
   };
 
   try {
@@ -144,6 +146,7 @@ async function normalizeDrug(input) {
     if (out.ingredientNames.length === 0) out.ingredientNames.push(out.input); // fallback
   } catch (err) {
     out.error = err.message || "lookup failed";
+    out.rateLimited = !!err.rateLimit;
   }
 
   normalizeCache.set(key, out);
@@ -157,15 +160,34 @@ function pickText(field) {
   return (field || "").toString().trim();
 }
 
-// Fetch and de-duplicate labels for an ingredient name.
-async function fetchLabels(ingredientName) {
-  const key = ingredientName.toLowerCase();
+// Fetch and de-duplicate labels for a drug. Searches every one of the drug's
+// ingredient names across BOTH openfda.generic_name and openfda.substance_name
+// (recovers salt-form and combination-product labels a single-name search
+// misses), unions the results, then de-dupes by spl_set_id (newest wins).
+async function fetchLabels(ingredientNames) {
+  // Single-ingredient names only for the search (drop MIN "a / b" combo names).
+  const searchNames = [];
+  const seen = new Set();
+  for (const n of ingredientNames) {
+    const name = (n || "").trim();
+    if (!name || name.indexOf("/") !== -1) continue;
+    const lc = name.toLowerCase();
+    if (seen.has(lc)) continue;
+    seen.add(lc);
+    searchNames.push(name);
+  }
+  if (searchNames.length === 0) {
+    for (const n of ingredientNames) { const v = (n || "").trim(); if (v) searchNames.push(v); }
+  }
+
+  const key = searchNames.map(n => n.toLowerCase()).sort().join("|");
   if (labelCache.has(key)) return labelCache.get(key);
 
-  const result = { total: 0, fetched: 0, labels: [], error: null };
+  const result = { total: 0, fetched: 0, labels: [], error: null, rateLimited: false };
   try {
-    const q = encodeURIComponent(`openfda.generic_name:"${ingredientName}"`);
-    const url = `${OPENFDA}?search=${q}&sort=effective_time:desc&limit=${LABEL_CAP}`;
+    const clauses = searchNames.map(n =>
+      `openfda.generic_name:"${n}" OR openfda.substance_name:"${n}"`).join(" OR ");
+    const url = `${OPENFDA}?search=${encodeURIComponent(clauses)}&sort=effective_time:desc&limit=${LABEL_CAP}`;
     const d = await getJson(url);
     if (d.__notFound) { labelCache.set(key, result); return result; }
 
@@ -193,6 +215,7 @@ async function fetchLabels(ingredientName) {
     result.fetched = result.labels.length;
   } catch (err) {
     result.error = err.message || "lookup failed";
+    result.rateLimited = !!err.rateLimit;
   }
 
   labelCache.set(key, result);
@@ -289,11 +312,14 @@ function searchDirection(source, matchers) {
 
 const STATE = {
   MENTION: "mention", NOMENTION: "nomention", NOLABEL: "nolabel",
-  UNRECOGNIZED: "unrecognized", ERROR: "error"
+  UNRECOGNIZED: "unrecognized", ERROR: "error", RATELIMIT: "ratelimit"
 };
 
 function evaluatePair(a, b) {
   // a, b are objects: { norm, labels, matchers, label } prepared in run().
+  if (a.norm.rateLimited || b.norm.rateLimited || a.labels.rateLimited || b.labels.rateLimited) {
+    return { state: STATE.RATELIMIT, a, b };
+  }
   if (a.norm.error || b.norm.error || a.labels.error || b.labels.error) {
     return { state: STATE.ERROR, a, b };
   }
@@ -383,6 +409,7 @@ function renderPair(result) {
     case STATE.NOMENTION: badgeText = "No interaction mentioned"; stateClass = "s-nomention"; break;
     case STATE.NOLABEL: badgeText = "No FDA label to check"; stateClass = "s-nolabel"; break;
     case STATE.UNRECOGNIZED: badgeText = "Drug not recognized"; stateClass = "s-unrecognized"; break;
+    case STATE.RATELIMIT: badgeText = "Rate limited - wait and retry"; stateClass = "s-ratelimit"; break;
     default: badgeText = "Lookup error"; stateClass = "s-error";
   }
   pair.className = "pair " + stateClass;
@@ -409,6 +436,14 @@ function renderPair(result) {
         }
       }
     }
+    return pair;
+  }
+
+  if (result.state === STATE.RATELIMIT) {
+    pair.appendChild(el("p", null,
+      "openFDA or RxNorm is rate-limiting requests right now (HTTP 429). " +
+      "Please wait about a minute and try again. These free services allow only a " +
+      "limited number of requests per minute per IP address."));
     return pair;
   }
 
@@ -465,13 +500,16 @@ function renderDrugSummary(drugs) {
   for (const d of drugs) {
     const li = el("li", null);
     li.appendChild(el("span", { class: "name-in" }, titleCase(d.norm.input)));
-    if (!d.norm.recognized) {
+    if (d.norm.rateLimited) {
+      li.appendChild(el("span", { class: "tag" }, "rate limited (HTTP 429)"));
+    } else if (!d.norm.recognized) {
       li.appendChild(el("span", { class: "tag" }, d.norm.error ? "lookup error" : "not recognized"));
     } else {
       const ing = d.norm.ingredientNames[0] || d.norm.input;
       li.appendChild(document.createTextNode("  ->  ingredient: " + ing));
       if (d.norm.rxcui) li.appendChild(el("span", { class: "tag" }, "RxCUI " + d.norm.rxcui));
-      if (d.labels.error) li.appendChild(el("span", { class: "tag" }, "label lookup error"));
+      if (d.labels.rateLimited) li.appendChild(el("span", { class: "tag" }, "labels rate limited (HTTP 429)"));
+      else if (d.labels.error) li.appendChild(el("span", { class: "tag" }, "label lookup error"));
       else {
         const more = d.labels.total > d.labels.fetched ? ` (newest ${d.labels.fetched} searched)` : "";
         li.appendChild(el("span", { class: "tag" }, d.labels.total + " FDA label(s)" + more));
@@ -485,41 +523,66 @@ function renderDrugSummary(drugs) {
 
 // ---------- autocomplete ----------
 
-// Load RxNorm display names once for type-ahead. Lowercased, de-duplicated,
-// sorted. On any failure, resolve to [] so free-text entry still works.
-function loadDrugTerms() {
-  if (!drugTermsPromise) {
-    drugTermsPromise = getJson(`${RXNORM}/displaynames.json`)
-      .then(d => {
-        const raw = (d.displayTermsList && d.displayTermsList.term) || [];
-        const set = new Set();
-        for (const t of raw) { const s = t.trim().toLowerCase(); if (s) set.add(s); }
-        return Array.from(set).sort();
-      })
-      .catch(() => []);
-  }
-  return drugTermsPromise;
+// Dosage-form / unit / device tokens that mark a candidate as not a clean
+// drug name (RxNorm approximateTerm returns these as noise).
+const SUGGEST_NOISE = new Set([
+  "pill", "oral", "tablet", "capsule", "injectable", "solution", "suspension",
+  "product", "topical", "delayed", "release", "spray", "kit", "mg", "ml", "mcg",
+  "cream", "ointment", "patch", "drops", "intravenous", "subcutaneous", "gram",
+  "milligram", "pack", "lotion", "gel", "foam", "powder", "syrup", "elixir",
+  "lozenge", "suppository", "intramuscular", "ophthalmic", "otic", "nasal",
+  "inhalation", "extended", "sublingual", "chewable", "effervescent", "granules",
+  "film", "implant", "ring", "shampoo", "swab", "paste", "wipe", "wafer",
+  "disintegrating", "metered", "actuation", "hour", "unit", "units", "dose",
+  "coated", "prefilled", "injector", "concentrate", "rectal", "vaginal",
+  "transdermal", "liquid", "sterile", "spike", "aspirating"
+]);
+
+// True if a candidate name looks like a clean drug name (no dose strings,
+// bracketed forms, digits, or device/dosage-form words).
+function isCleanSuggestion(name) {
+  if (/[\[\]\d]/.test(name)) return false;
+  const toks = name.split(/[\s\/,\-]+/).filter(Boolean);
+  if (!toks.length) return false;
+  for (const t of toks) if (SUGGEST_NOISE.has(t)) return false;
+  return true;
 }
 
-// Prefix matches first, then substring matches, capped.
-function filterTerms(terms, query, limit) {
+// Per-keystroke suggestions via RxNorm approximateTerm. Cleans noise, prefers
+// prefix matches, caps the list, caches per query. Resolves to [] on any
+// failure or short query so free-text entry always works.
+async function fetchSuggestions(query) {
   const q = query.trim().toLowerCase();
-  if (q.length < 2) return [];
-  const starts = [], contains = [];
-  for (let i = 0; i < terms.length && starts.length < limit; i++) {
-    if (terms[i].startsWith(q)) starts.push(terms[i]);
-  }
-  if (starts.length < limit) {
-    for (let i = 0; i < terms.length && (starts.length + contains.length) < limit; i++) {
-      if (!terms[i].startsWith(q) && terms[i].includes(q)) contains.push(terms[i]);
+  if (q.length < 3) return [];
+  if (suggestCache.has(q)) return suggestCache.get(q);
+
+  let out = [];
+  try {
+    const d = await getJson(`${RXNORM}/approximateTerm.json?term=${encodeURIComponent(q)}&maxEntries=30`);
+    const cands = (d.approximateGroup && d.approximateGroup.candidate) || [];
+    const seen = new Set();
+    const clean = [];
+    for (const c of cands) {
+      if (!c.name) continue;
+      const name = c.name.toLowerCase().trim();
+      if (seen.has(name) || !isCleanSuggestion(name)) continue;
+      seen.add(name);
+      clean.push(name);
     }
+    const prefix = clean.filter(n => n.startsWith(q));
+    const pool = prefix.length ? prefix : clean;
+    pool.sort((a, b) => (a.length - b.length) || (a < b ? -1 : 1));
+    out = pool.slice(0, 10);
+  } catch (e) {
+    out = [];
   }
-  return starts.concat(contains).slice(0, limit);
+  suggestCache.set(q, out);
+  return out;
 }
 
 // Attach a keyboard-accessible suggestions dropdown to one input.
 function attachAutocomplete(input, list) {
-  let items = [], active = -1, timer = null;
+  let items = [], active = -1, timer = null, seq = 0, blurred = false;
 
   function close() {
     list.hidden = true;
@@ -544,8 +607,12 @@ function attachAutocomplete(input, list) {
   function select(term) { input.value = term; close(); }
 
   function render() {
-    loadDrugTerms().then(terms => {
-      items = filterTerms(terms, input.value, 10);
+    const q = input.value;
+    const mySeq = seq;
+    fetchSuggestions(q).then(suggestions => {
+      // Ignore stale responses: a newer keystroke invalidated this, or focus lost.
+      if (mySeq !== seq || blurred) return;
+      items = suggestions;
       if (!items.length) { close(); return; }
       list.innerHTML = "";
       items.forEach((t, i) => {
@@ -560,13 +627,14 @@ function attachAutocomplete(input, list) {
   }
 
   input.addEventListener("focus", () => {
-    loadDrugTerms();
-    if (input.value.trim().length >= 2) render();
+    blurred = false; seq++;
+    if (input.value.trim().length >= 3) render();
   });
-  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(render, 100); });
+  // Bump seq on every keystroke so any in-flight request is invalidated at once.
+  input.addEventListener("input", () => { blurred = false; seq++; clearTimeout(timer); timer = setTimeout(render, 180); });
   input.addEventListener("keydown", (e) => {
     if (list.hidden) {
-      if (e.key === "ArrowDown" && input.value.trim().length >= 2) render();
+      if (e.key === "ArrowDown" && input.value.trim().length >= 3) render();
       return;
     }
     if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, items.length - 1); updateActive(); }
@@ -575,7 +643,7 @@ function attachAutocomplete(input, list) {
     else if (e.key === "Escape") { e.preventDefault(); close(); }
     else if (e.key === "Tab") { close(); }
   });
-  input.addEventListener("blur", () => { setTimeout(close, 150); });
+  input.addEventListener("blur", () => { blurred = true; setTimeout(close, 150); });
 }
 
 // ---------- form wiring ----------
@@ -669,8 +737,8 @@ async function run(evt) {
     // 2. Fetch FDA labels for recognized drugs (by ingredient name).
     statusEl().textContent = "Reading U.S. FDA labels from openFDA...";
     const drugs = await mapLimit(norms, MAX_CONCURRENCY, async (norm) => {
-      let labels = { total: 0, fetched: 0, labels: [], fdaNames: new Set(), error: null };
-      if (norm.recognized) labels = await fetchLabels(norm.ingredientNames[0] || norm.input);
+      let labels = { total: 0, fetched: 0, labels: [], error: null, rateLimited: false };
+      if (norm.recognized) labels = await fetchLabels(norm.ingredientNames.length ? norm.ingredientNames : [norm.input]);
       return { norm, labels };
     });
 
@@ -684,6 +752,9 @@ async function run(evt) {
     resultsEl().appendChild(renderDrugSummary(drugs));
     const pairsBox = el("div", { class: "card" });
     pairsBox.appendChild(el("h2", null, "Pairwise results"));
+    pairsBox.appendChild(el("p", { class: "note" },
+      "Each pair is checked independently. This tool does not model additive or " +
+      "cumulative effects across three or more drugs (for example, several sedatives taken together)."));
 
     for (let i = 0; i < drugs.length; i++) {
       for (let j = i + 1; j < drugs.length; j++) {
@@ -700,11 +771,41 @@ async function run(evt) {
   }
 }
 
+// One-click examples that populate the rows and run a check.
+const EXAMPLES = [
+  ["warfarin", "aspirin"],
+  ["warfarin", "fluconazole"],
+  ["simvastatin", "clarithromycin"]
+];
+
+function setDrugs(list) {
+  const rows = rowsEl();
+  rows.innerHTML = "";
+  for (const name of list) addRow(name);
+  while (rows.children.length < 2) addRow("");
+}
+
+function runExample(pair) {
+  setDrugs(pair);
+  document.getElementById("drug-form").requestSubmit();
+}
+
+function buildExamples() {
+  const box = document.getElementById("example-chips");
+  if (!box) return;
+  for (const pair of EXAMPLES) {
+    const chip = el("button", { type: "button", class: "chip" }, pair.join(" + "));
+    chip.addEventListener("click", () => runExample(pair));
+    box.appendChild(chip);
+  }
+}
+
 function init() {
   addRow("");
   addRow("");
   document.getElementById("add-drug").addEventListener("click", () => addRow("").focus());
   document.getElementById("drug-form").addEventListener("submit", run);
+  buildExamples();
 }
 
 document.addEventListener("DOMContentLoaded", init);
