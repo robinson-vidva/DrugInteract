@@ -1,18 +1,6 @@
-TODO (owner to finalize): choose and finalize the CODE license for DrugInteract.
-
-MIT is recommended and appropriate for this project. The data sources are public
-domain (see DATA_LICENSE.md), so there is no non-commercial or share-alike
-constraint carried over from the data. This placeholder does NOT yet grant a
-license; replace this entire file with the finalized text and fill in the
-copyright line before publishing or distributing.
-
-Suggested MIT template (fill in [YEAR] and [COPYRIGHT HOLDER], then remove this
-note and the lines above):
-
---------------------------------------------------------------------------------
 MIT License
 
-Copyright (c) [YEAR] [COPYRIGHT HOLDER]
+Copyright (c) 2026 Robinson Vidva
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -31,4 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
---------------------------------------------------------------------------------
