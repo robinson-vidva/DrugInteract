@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DrugInteract - educational drug interaction reference</title>
+  <meta name="description" content="Free, educational drug-drug interaction reference. Checks U.S. FDA drug labels (openFDA) live in your browser. Not medical advice.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand">DrugInteract
+        <small>educational drug interaction reference</small>
+      </div>
+      <nav class="nav">
+        <a href="index.html">Check</a>
+        <a href="methods.html">Methods &amp; About</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <div class="wrap">
+      <strong>Educational use only.</strong>
+      DrugInteract is for educational and research reference only. It is not medical
+      advice, diagnosis, or treatment. Data may be incomplete or contain errors; the
+      absence of a listed interaction does not mean a combination is safe. Always
+      consult a qualified healthcare professional.
+    </div>
+  </div>
+
+  <main>
+    <div class="wrap">
+      <section class="card">
+        <h1>Check drug interactions</h1>
+        <p class="lead">
+          Enter two or more drugs. Each name is normalized with RxNorm, then this
+          tool reads the live U.S. FDA drug labels (openFDA) and tells you whether
+          one drug's label text mentions the other. It does not grade severity.
+        </p>
+
+        <form id="drug-form" novalidate>
+          <div id="drug-rows" class="drug-rows" aria-label="Drugs to check"></div>
+          <div class="controls">
+            <button type="button" id="add-drug">Add another drug</button>
+            <button type="submit" id="check" class="btn-primary">Check interactions</button>
+          </div>
+          <p class="hint">Examples: warfarin, aspirin, fluconazole, ibuprofen, simvastatin. Brand names work too (e.g. Coumadin).</p>
+        </form>
+
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="results" aria-live="polite"></section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>
+        Drug names normalized with <a href="https://rxnav.nlm.nih.gov/" rel="noopener" target="_blank">RxNorm</a>,
+        a product of the U.S. National Library of Medicine (NLM). NLM does not endorse this product.
+      </p>
+      <p>
+        Interaction text from <a href="https://open.fda.gov/apis/drug/label/" rel="noopener" target="_blank">openFDA Drug Label API</a>
+        (U.S. FDA, public domain). Do not rely on openFDA to make decisions regarding medical care.
+      </p>
+      <p>
+        DrugInteract is a free, non-commercial, educational project.
+        See <a href="methods.html">Methods &amp; About</a> for data sources, limitations, and licenses.
+      </p>
+    </div>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

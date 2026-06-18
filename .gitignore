@@ -1,0 +1,12 @@
+# Local-only Claude context (never commit)
+CLAUDE.local.md
+
+# Local Claude tooling (dev preview config, etc.)
+.claude/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

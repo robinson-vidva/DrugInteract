@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Methods &amp; About - DrugInteract</title>
+  <meta name="description" content="How DrugInteract works: data sources, normalization, matching, and limitations.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand">DrugInteract
+        <small>educational drug interaction reference</small>
+      </div>
+      <nav class="nav">
+        <a href="index.html">Check</a>
+        <a href="methods.html">Methods &amp; About</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <div class="wrap">
+      <strong>Educational use only.</strong>
+      DrugInteract is for educational and research reference only. It is not medical
+      advice, diagnosis, or treatment. Data may be incomplete or contain errors; the
+      absence of a listed interaction does not mean a combination is safe. Always
+      consult a qualified healthcare professional.
+    </div>
+  </div>
+
+  <main>
+    <div class="wrap prose">
+      <section class="card">
+        <h1>Methods &amp; About</h1>
+        <p class="lead">
+          DrugInteract is a fully client-side static web page. There is no backend
+          and no stored interaction dataset. Every lookup is a live query, from your
+          browser, to two free public APIs from the U.S. government.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>How a lookup works</h2>
+        <ol>
+          <li><strong>Normalize each drug.</strong> Your typed text is sent to the
+            <a href="https://rxnav.nlm.nih.gov/" target="_blank" rel="noopener">RxNorm</a>
+            REST API (<code>findRxcuiByString</code>). If there is no exact match,
+            RxNorm spelling suggestions are offered as "did you mean". A matched
+            concept (including a brand name) is resolved to its active ingredient.</li>
+          <li><strong>Fetch FDA labels.</strong> For each drug, the
+            <a href="https://open.fda.gov/apis/drug/label/" target="_blank" rel="noopener">openFDA Drug Label API</a>
+            is queried by <code>openfda.generic_name</code> (the most reliable key;
+            label RxCUIs are product-level, not ingredient-level). Labels are
+            de-duplicated by <code>spl_set_id</code> and read newest-first.</li>
+          <li><strong>Search the label text.</strong> For each pair, the
+            <em>Drug Interactions</em> (Section 7) text of <em>every</em> fetched
+            label is searched, case-insensitively and on word boundaries, for the
+            other drug's ingredient, generic, and brand names. The
+            <em>Contraindications</em> (Section 4) text is searched as a secondary
+            signal. The check is run in both directions.</li>
+          <li><strong>Report.</strong> Matches are shown with a quoted snippet and a
+            citation to the specific FDA label (generic name, effective date, and a
+            DailyMed link), plus a "found in N of M labels" count.</li>
+        </ol>
+        <p>
+          Because different manufacturers' labels for the same generic drug carry
+          different Section 7 text, all returned labels are searched (capped at the
+          most recent 100 per drug for performance) so that label selection does not
+          hide a real interaction.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>What the results mean</h2>
+        <ul>
+          <li><strong>Interaction mentioned.</strong> At least one drug's FDA label
+            names the other in its Drug Interactions (or Contraindications) text. The
+            snippet is the label's own wording, not a severity judgment.</li>
+          <li><strong>No interaction mentioned.</strong> Labels were found and
+            searched, and neither names the other. This does <em>not</em> mean the
+            combination is safe (see limitations).</li>
+          <li><strong>No FDA label to check.</strong> The drug is recognized by
+            RxNorm, but no U.S. FDA label with interaction text was found to search.
+            This is different from "no interaction mentioned" - nothing could be
+            checked.</li>
+          <li><strong>Not recognized.</strong> RxNorm did not recognize the input.
+            Spelling suggestions are offered.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Limitations</h2>
+        <ul>
+          <li><strong>No severity grading.</strong> openFDA labels contain no
+            Major / Moderate / Minor classification. This tool reports only whether
+            an interaction is mentioned, never how serious it is.</li>
+          <li><strong>Free text, written by manufacturers.</strong> Section 7 is
+            narrative text written by each label holder. Quality, depth, and
+            completeness vary widely between products.</li>
+          <li><strong>Class-level statements are missed.</strong> A label may warn
+            about a drug <em>class</em> (for example "strong CYP3A4 inhibitors")
+            without naming a specific drug. A name-based search will not match these,
+            so real interactions described only at the class level are a known miss.</li>
+          <li><strong>U.S. drugs only.</strong> openFDA covers U.S. labeling. Coverage
+            may not reflect currently distributed products, and over-the-counter
+            monograph products may be represented differently or not at all.</li>
+          <li><strong>Live and rate-limited.</strong> Results depend on the openFDA
+            and RxNorm services being available and on per-IP rate limits. Results
+            are cached only for the current browser session.</li>
+          <li><strong>Name matching is imperfect.</strong> Matching on names can both
+            miss interactions (class-level, salts, synonyms not on the label) and, less
+            often, over-match. Always confirm against the full label and a clinician.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Data sources, versions, and licenses</h2>
+        <ul>
+          <li><strong>openFDA Drug Label API</strong> -
+            <code>https://api.fda.gov/drug/label.json</code>. U.S. FDA, public domain.
+            Queried live; the effective date of each label is shown with each result.
+            FDA statement: "Do not rely on openFDA to make decisions regarding medical care."</li>
+          <li><strong>RxNorm</strong> (RxNav REST API) -
+            <code>https://rxnav.nlm.nih.gov/REST/</code>. Courtesy of the U.S. National
+            Library of Medicine. NLM does not endorse this product. RxNorm data is in
+            the public domain.</li>
+          <li><strong>Code license:</strong> see <code>LICENSE</code> in the
+            repository. <strong>Data license:</strong> see <code>DATA_LICENSE.md</code>.</li>
+        </ul>
+        <p class="hint">
+          The discontinued RxNorm drug-drug interaction API (retired 2 January 2024)
+          is not used. This tool does not call it.
+        </p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>DrugInteract is a free, non-commercial, educational project. Not medical advice.</p>
+      <p>RxNorm courtesy of the U.S. NLM (no endorsement). Label text from openFDA (U.S. FDA, public domain).</p>
+    </div>
+  </footer>
+</body>
+</html>
