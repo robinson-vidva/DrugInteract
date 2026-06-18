@@ -95,6 +95,49 @@
       </section>
 
       <section class="card">
+        <h2>Drug profiles (informational)</h2>
+        <p>
+          For each recognized drug, a separate "Drug profiles" panel shows
+          categorical background from the
+          <a href="https://rxnav.nlm.nih.gov/RxClassIntro.html" target="_blank" rel="noopener">RxClass</a>
+          API (NLM). It is fetched after the interaction check and never affects
+          the interaction result.
+        </p>
+        <ul>
+          <li><strong>Drug family (ATC)</strong> - the WHO Anatomical Therapeutic
+            Chemical class, e.g. atorvastatin in <code>C10AA</code> "HMG CoA
+            reductase inhibitors". RxClass rolls a fixed-dose combination product's
+            ATC up to each ingredient, which can attach a misleading family (for
+            example simvastatin appearing under "DPP-4 inhibitors" via a sitagliptin
+            combination). We suppress these: a family is shown only when the drug has
+            at least one single-ingredient product classified under it. A drug with
+            several legitimate single-ingredient families still shows all of them.</li>
+          <li><strong>Pharmacologic class (EPC)</strong> - the FDA Established
+            Pharmacologic Class, e.g. "HMG-CoA Reductase Inhibitor".</li>
+          <li><strong>Mechanism / target class (MoA)</strong> - the FDA/MED-RT
+            Mechanism of Action, used here as mechanism and target context, e.g.
+            "Vitamin K Epoxide Reductase Inhibitors".</li>
+          <li><strong>CYP enzymes</strong> - cytochrome P450 involvement. RxClass
+            classifies drugs as CYP <em>inhibitors</em> and <em>inducers</em> only;
+            it has <strong>no substrate classification</strong>, so substrate is
+            always shown as "not classified in RxClass" and never inferred.</li>
+        </ul>
+        <p>
+          <strong>No inference.</strong> This profile is context, not an
+          interaction predictor. A shared family, target, or CYP enzyme does not
+          by itself mean two drugs interact, and the tool never draws that
+          conclusion. The interaction verdict comes only from openFDA label text.
+          Coverage is categorical and incomplete; where RxClass returns nothing, a
+          field reads "not available in RxClass" rather than implying none.
+        </p>
+        <p class="hint">
+          True molecular target lists (e.g. ChEMBL) are intentionally out of scope
+          to keep this project public-domain; MoA serves as the mechanism/target
+          context.
+        </p>
+      </section>
+
+      <section class="card">
         <h2>Limitations</h2>
         <ul>
           <li><strong>No severity grading.</strong> openFDA labels contain no
@@ -134,6 +177,11 @@
             <code>https://rxnav.nlm.nih.gov/REST/</code>. Courtesy of the U.S. National
             Library of Medicine. NLM does not endorse this product. RxNorm data is in
             the public domain.</li>
+          <li><strong>RxClass</strong> (RxNav REST API) -
+            <code>https://rxnav.nlm.nih.gov/REST/rxclass/</code>. Source of the drug
+            profile panel (ATC, EPC, MoA, CYP classes). Courtesy of the U.S. National
+            Library of Medicine; NLM does not endorse this product. Public domain, no
+            license or key required.</li>
           <li><strong>Code license:</strong> see <code>LICENSE</code> in the
             repository. <strong>Data license:</strong> see <code>DATA_LICENSE.md</code>.</li>
         </ul>
@@ -148,7 +196,7 @@
   <footer class="site-footer">
     <div class="wrap">
       <p>DrugInteract is a free, non-commercial, educational project. Not medical advice.</p>
-      <p>RxNorm courtesy of the U.S. NLM (no endorsement). Label text from openFDA (U.S. FDA, public domain).</p>
+      <p>RxNorm and RxClass courtesy of the U.S. NLM (no endorsement). Label text from openFDA (U.S. FDA, public domain).</p>
     </div>
   </footer>
 </body>

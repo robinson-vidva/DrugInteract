@@ -5,6 +5,7 @@
 "use strict";
 
 const RXNORM = "https://rxnav.nlm.nih.gov/REST";
+const RXCLASS = "https://rxnav.nlm.nih.gov/REST/rxclass";
 const OPENFDA = "https://api.fda.gov/drug/label.json";
 
 const LABEL_CAP = 100;     // most-recent labels searched per drug
@@ -23,6 +24,7 @@ const NAME_STOPWORDS = new Set([
 const normalizeCache = new Map(); // input(lower) -> normalize result
 const labelCache = new Map();     // ingredient-names key -> labels result
 const suggestCache = new Map();   // query(lower) -> string[] suggestions
+const profileCache = new Map();   // ingredient rxcui -> RxClass profile
 
 let inputSeq = 0;                 // unique ids for input/listbox pairs
 
@@ -98,6 +100,7 @@ async function normalizeDrug(input) {
     input: input.trim(),
     recognized: false,
     rxcui: null,
+    ingredientRxcui: null,  // first IN/MIN rxcui, used for the RxClass profile lookup
     ingredientNames: [],
     names: new Set(),       // names used to find THIS drug inside another's text
     suggestions: [],
@@ -136,6 +139,7 @@ async function normalizeDrug(input) {
       if (g.tty === "IN" || g.tty === "MIN") {
         for (const c of g.conceptProperties) {
           if (c.name) { out.ingredientNames.push(c.name); out.names.add(c.name.toLowerCase()); }
+          if (c.rxcui && !out.ingredientRxcui) out.ingredientRxcui = c.rxcui;
         }
       } else if (g.tty === "BN") {
         for (const c of g.conceptProperties) {
@@ -219,6 +223,85 @@ async function fetchLabels(ingredientNames) {
   }
 
   labelCache.set(key, result);
+  return result;
+}
+
+// ---------- RxClass drug profile (informational only) ----------
+
+// IMPORTANT: profile data is background context, never an interaction signal.
+// The interaction verdict comes only from openFDA label-text matching. We use
+// only the drug's OWN classes (rela has_epc / has_moa, relaSource ATC); we
+// deliberately exclude contraindication relations (e.g. ci_moa), which would
+// imply interactions. RxClass has no CYP "Substrate" classes (only Inhibitor /
+// Inducer), so substrate is reported as not classified, never inferred.
+
+// Parse the byRxcui rows into family / pharm class / mechanism / CYP groups.
+function extractProfile(rows) {
+  const profile = { atc: [], epc: [], moa: [], cypInhibitor: [], cypInducer: [] };
+  const seen = new Set();
+  const add = (bucket, value, key) => {
+    if (!value || seen.has(key)) return;
+    seen.add(key);
+    bucket.push(value);
+  };
+
+  // ATC needs two passes. RxClass rolls a fixed-dose combination product's ATC
+  // up to each of its ingredients, so an ingredient can appear under a family
+  // it does not belong to on its own (e.g. simvastatin under "DPP-4 inhibitors"
+  // via a simvastatin/sitagliptin combo). We therefore keep an ATC family only
+  // when the ingredient has at least one SINGLE-ingredient product (ATCPROD)
+  // classified under it. Combination products carry " / " between ingredients.
+  const atc = new Map(); // classId -> { id, name, mono }
+
+  for (const r of rows) {
+    const c = r.rxclassMinConceptItem || {};
+    const name = c.className;
+    if (!name) continue;
+    const type = c.classType, rela = r.rela;
+
+    if (type === "ATC1-4") {
+      let e = atc.get(c.classId);
+      if (!e) { e = { id: c.classId, name, mono: false }; atc.set(c.classId, e); }
+      const mc = r.minConcept || {};
+      if (r.relaSource === "ATCPROD" && mc.name && mc.name.indexOf(" / ") === -1) e.mono = true;
+    } else if (type === "EPC" && rela === "has_epc") {
+      add(profile.epc, name, "epc|" + name);
+    } else if (type === "MOA" && rela === "has_moa") {
+      const cyp = name.match(/Cytochrome P450 (\S+) (Inhibitors|Inducers)/i);
+      if (cyp) {
+        const label = "CYP" + cyp[1].toUpperCase();
+        if (/Inhibitor/i.test(cyp[2])) add(profile.cypInhibitor, label, "cypi|" + label);
+        else add(profile.cypInducer, label, "cypd|" + label);
+      } else {
+        add(profile.moa, name, "moa|" + name);
+      }
+    }
+  }
+
+  for (const e of atc.values()) {
+    if (e.mono && !/combination/i.test(e.name)) profile.atc.push({ id: e.id, name: e.name });
+  }
+  return profile;
+}
+
+// Fetch a drug's RxClass profile by its ingredient RxCUI. Cached per RxCUI.
+async function fetchProfile(rxcui) {
+  if (!rxcui) return { empty: true };
+  if (profileCache.has(rxcui)) return profileCache.get(rxcui);
+
+  const result = { atc: [], epc: [], moa: [], cypInhibitor: [], cypInducer: [], error: null, rateLimited: false };
+  try {
+    const d = await getJson(`${RXCLASS}/class/byRxcui.json?rxcui=${encodeURIComponent(rxcui)}`);
+    if (!d.__notFound) {
+      const rows = (d.rxclassDrugInfoList && d.rxclassDrugInfoList.rxclassDrugInfo) || [];
+      Object.assign(result, extractProfile(rows));
+    }
+  } catch (err) {
+    result.error = err.message || "lookup failed";
+    result.rateLimited = !!err.rateLimit;
+  }
+
+  profileCache.set(rxcui, result);
   return result;
 }
 
@@ -521,6 +604,67 @@ function renderDrugSummary(drugs) {
   return box;
 }
 
+// Build the "Drug profiles" card with a loading slot per recognized drug.
+// Returns the card plus a map from drug -> body element to fill progressively.
+function buildProfilesCard(drugs) {
+  const box = el("div", { class: "card profiles" });
+  box.appendChild(el("h2", null, "Drug profiles"));
+  box.appendChild(el("p", { class: "note" },
+    "Informational background from RxClass: drug family, pharmacologic class, mechanism, and CYP enzymes. " +
+    "This is context only and is NOT used to determine interactions. A shared class, target, or CYP enzyme " +
+    "does not by itself mean two drugs interact - the interaction result above comes only from FDA label text."));
+  const slots = new Map();
+  for (const d of drugs) {
+    if (!d.norm.recognized) continue;
+    const block = el("div", { class: "profile" });
+    block.appendChild(el("h3", null, titleCase(d.norm.input)));
+    const body = el("div", { class: "profile-body" });
+    body.appendChild(el("p", { class: "hint" }, "Loading profile from RxClass..."));
+    block.appendChild(body);
+    box.appendChild(block);
+    slots.set(d, body);
+  }
+  return { box, slots };
+}
+
+function fillProfile(body, profile) {
+  body.innerHTML = "";
+  if (profile.rateLimited) {
+    body.appendChild(el("p", { class: "hint" }, "Profile rate limited (HTTP 429) - wait and try again."));
+    return;
+  }
+  if (profile.error) {
+    body.appendChild(el("p", { class: "hint" }, "Profile lookup failed; try again later."));
+    return;
+  }
+
+  const row = (label, value) => {
+    const r = el("div", { class: "profile-row" });
+    r.appendChild(el("span", { class: "profile-label" }, label));
+    r.appendChild(el("span", { class: "profile-value" }, value));
+    body.appendChild(r);
+  };
+  const NA = "not available in RxClass";
+  row("Drug family (ATC)", profile.atc.length ? profile.atc.map(a => `${a.name} (${a.id})`).join("; ") : NA);
+  row("Pharmacologic class (EPC)", profile.epc.length ? profile.epc.join("; ") : NA);
+  row("Mechanism / target class (MoA)", profile.moa.length ? profile.moa.join("; ") : NA);
+
+  // CYP enzymes: substrate is never classified by RxClass; show inhibitor /
+  // inducer where present. Stated as fact about the data, not a prediction.
+  const cypRow = el("div", { class: "profile-row" });
+  cypRow.appendChild(el("span", { class: "profile-label" }, "CYP enzymes"));
+  const cypVal = el("div", { class: "profile-value cyp" });
+  cypVal.appendChild(el("div", null, [el("span", { class: "cyp-tag" }, "Substrate"), document.createTextNode(" not classified in RxClass")]));
+  if (profile.cypInhibitor.length) {
+    cypVal.appendChild(el("div", null, [el("span", { class: "cyp-tag" }, "Inhibitor"), document.createTextNode(" " + profile.cypInhibitor.join(", "))]));
+  }
+  if (profile.cypInducer.length) {
+    cypVal.appendChild(el("div", null, [el("span", { class: "cyp-tag" }, "Inducer"), document.createTextNode(" " + profile.cypInducer.join(", "))]));
+  }
+  cypRow.appendChild(cypVal);
+  body.appendChild(cypRow);
+}
+
 // ---------- autocomplete ----------
 
 // Dosage-form / unit / device tokens that mark a candidate as not a clean
@@ -763,6 +907,21 @@ async function run(evt) {
       }
     }
     resultsEl().appendChild(pairsBox);
+
+    // Drug profiles (RxClass) - informational only. Fetched AFTER the interaction
+    // verdict is already shown, off the critical path, and rendered progressively.
+    // This panel never affects the interaction result above.
+    const recognized = drugs.filter(d => d.norm.recognized);
+    if (recognized.length) {
+      const { box, slots } = buildProfilesCard(drugs);
+      resultsEl().appendChild(box);
+      mapLimit(recognized, MAX_CONCURRENCY, async (d) => {
+        const profile = await fetchProfile(d.norm.ingredientRxcui || d.norm.rxcui);
+        const body = slots.get(d);
+        if (body) fillProfile(body, profile);
+      }).catch(() => { /* profiles are best-effort; ignore */ });
+    }
+
     statusEl().textContent = "";
   } catch (err) {
     statusEl().textContent = "Something went wrong: " + (err.message || err) + ". Please try again.";

@@ -31,6 +31,18 @@ This file documents those sources and their terms. It covers the **data**; the
 - The RxNorm drug-drug interaction API was **discontinued on 2 January 2024** and
   is **not** used by this project.
 
+## RxClass (via the RxNav REST API)
+
+- Endpoint: `https://rxnav.nlm.nih.gov/REST/rxclass/`
+- Provider: U.S. National Library of Medicine (NLM), National Institutes of Health
+- Status: **Public domain.** No license or API key required.
+- Required notice (NLM): the drug profile panel (ATC, EPC, MoA, and CYP
+  inhibitor/inducer classes) is provided **courtesy of the U.S. National Library
+  of Medicine. NLM does not endorse this product.**
+- Used for informational background only; it never determines an interaction
+  result. RxClass underlying sources include ATC, FDA SPL/DailyMed, and MED-RT.
+- RxClass has no CYP "substrate" classification; substrate is never inferred.
+
 ## Attribution placement
 
 These attributions appear in the site footer and on the Methods & About page, in
