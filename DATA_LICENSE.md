@@ -1,9 +1,13 @@
 # Data sources and licenses
 
 DrugInteract ships **no bundled interaction dataset**. All drug data is fetched
-live, from the user's browser, from two public U.S. government APIs at query time.
-This file documents those sources and their terms. It covers the **data**; the
-**code** license is separate (see `LICENSE`).
+live, from the user's browser, from public U.S. government APIs at query time.
+This file documents those sources and their terms, and covers the **data** only.
+
+The application's **source code** is licensed separately under the **MIT License**
+(see `LICENSE`). That MIT license applies to the code only - it does **not** apply
+to the data, which comes from the public-domain and open U.S. government sources
+described below.
 
 ## openFDA Drug Label API
 

@@ -2,8 +2,8 @@
 
 A free, non-commercial, **educational** drug-drug interaction reference. It is a
 fully client-side static web page: no backend, no framework, no build step, and
-no bundled dataset. Every lookup is a live query, from your browser, to two free
-public U.S. government APIs.
+no bundled dataset. Every lookup is a live query, from your browser, to free,
+public U.S. government APIs (the NLM's RxNorm and RxClass, and the FDA's openFDA).
 
 > **Educational use only.** DrugInteract is not medical advice, diagnosis, or
 > treatment. Data may be incomplete or contain errors; the absence of a listed
@@ -42,12 +42,15 @@ python3 -m http.server 8000
 # then open http://localhost:8000/
 ```
 
-## Data sources and licenses
+## Code and data licenses
+
+The **code** in this repository is licensed under the **MIT License** (see
+[`LICENSE`](LICENSE)). The **data is not covered by that license** - it comes from
+public-domain / open U.S. government sources:
 
 - **openFDA Drug Label API** - U.S. FDA, public domain.
-- **RxNorm / RxNav** - U.S. National Library of Medicine, public domain; courtesy
-  of the NLM, which does not endorse this product.
+- **RxNorm and RxClass** (RxNav) - U.S. National Library of Medicine, public
+  domain; courtesy of the NLM, which does not endorse this product.
 
-See [`DATA_LICENSE.md`](DATA_LICENSE.md) for data terms and required notices, and
-[`LICENSE`](LICENSE) for the code license. See the in-app **Methods & About** page
-for the full methodology and limitations.
+See [`DATA_LICENSE.md`](DATA_LICENSE.md) for full data terms and required notices,
+and the in-app **Methods & About** page for methodology and limitations.

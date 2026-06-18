@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DrugInteract - educational drug interaction reference</title>
   <meta name="description" content="Free, educational drug-drug interaction reference. Checks U.S. FDA drug labels (openFDA) live in your browser. Not medical advice.">
-  <link rel="stylesheet" href="styles.css">
+  <!-- Bump the ?v= token on any app.js / styles.css change to bust browser and CDN caches on redeploy. -->
+  <link rel="stylesheet" href="styles.css?v=1.0.0">
 </head>
 <body>
   <header class="site-header">
@@ -78,6 +79,6 @@
     </div>
   </footer>
 
-  <script src="app.js" defer></script>
+  <script src="app.js?v=1.0.0" defer></script>
 </body>
 </html>
