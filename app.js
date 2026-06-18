@@ -23,6 +23,9 @@ const NAME_STOPWORDS = new Set([
 const normalizeCache = new Map(); // input(lower) -> normalize result
 const labelCache = new Map();     // ingredientName(lower) -> labels result
 
+let inputSeq = 0;                 // unique ids for input/listbox pairs
+let drugTermsPromise = null;      // cached promise of the autocomplete term list
+
 // ---------- small utilities ----------
 
 function el(tag, attrs, children) {
@@ -480,6 +483,101 @@ function renderDrugSummary(drugs) {
   return box;
 }
 
+// ---------- autocomplete ----------
+
+// Load RxNorm display names once for type-ahead. Lowercased, de-duplicated,
+// sorted. On any failure, resolve to [] so free-text entry still works.
+function loadDrugTerms() {
+  if (!drugTermsPromise) {
+    drugTermsPromise = getJson(`${RXNORM}/displaynames.json`)
+      .then(d => {
+        const raw = (d.displayTermsList && d.displayTermsList.term) || [];
+        const set = new Set();
+        for (const t of raw) { const s = t.trim().toLowerCase(); if (s) set.add(s); }
+        return Array.from(set).sort();
+      })
+      .catch(() => []);
+  }
+  return drugTermsPromise;
+}
+
+// Prefix matches first, then substring matches, capped.
+function filterTerms(terms, query, limit) {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const starts = [], contains = [];
+  for (let i = 0; i < terms.length && starts.length < limit; i++) {
+    if (terms[i].startsWith(q)) starts.push(terms[i]);
+  }
+  if (starts.length < limit) {
+    for (let i = 0; i < terms.length && (starts.length + contains.length) < limit; i++) {
+      if (!terms[i].startsWith(q) && terms[i].includes(q)) contains.push(terms[i]);
+    }
+  }
+  return starts.concat(contains).slice(0, limit);
+}
+
+// Attach a keyboard-accessible suggestions dropdown to one input.
+function attachAutocomplete(input, list) {
+  let items = [], active = -1, timer = null;
+
+  function close() {
+    list.hidden = true;
+    list.innerHTML = "";
+    items = [];
+    active = -1;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+
+  function updateActive() {
+    const lis = list.children;
+    for (let i = 0; i < lis.length; i++) lis[i].classList.toggle("active", i === active);
+    if (active >= 0) {
+      input.setAttribute("aria-activedescendant", input.id + "-opt-" + active);
+      lis[active].scrollIntoView({ block: "nearest" });
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function select(term) { input.value = term; close(); }
+
+  function render() {
+    loadDrugTerms().then(terms => {
+      items = filterTerms(terms, input.value, 10);
+      if (!items.length) { close(); return; }
+      list.innerHTML = "";
+      items.forEach((t, i) => {
+        const li = el("li", { class: "ac-item", id: input.id + "-opt-" + i, role: "option" }, t);
+        li.addEventListener("mousedown", (e) => { e.preventDefault(); select(t); });
+        list.appendChild(li);
+      });
+      active = -1;
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+    });
+  }
+
+  input.addEventListener("focus", () => {
+    loadDrugTerms();
+    if (input.value.trim().length >= 2) render();
+  });
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(render, 100); });
+  input.addEventListener("keydown", (e) => {
+    if (list.hidden) {
+      if (e.key === "ArrowDown" && input.value.trim().length >= 2) render();
+      return;
+    }
+    if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, items.length - 1); updateActive(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, -1); updateActive(); }
+    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); select(items[active]); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "Tab") { close(); }
+  });
+  input.addEventListener("blur", () => { setTimeout(close, 150); });
+}
+
 // ---------- form wiring ----------
 
 const rowsEl = () => document.getElementById("drug-rows");
@@ -489,15 +587,28 @@ const resultsEl = () => document.getElementById("results");
 function addRow(value) {
   const rows = rowsEl();
   const idx = rows.children.length + 1;
+  const id = "drug-input-" + (inputSeq++);
   const row = el("div", { class: "drug-row" });
   row.appendChild(el("span", { class: "idx" }, String(idx)));
-  const input = el("input", { type: "text", placeholder: "Drug name", "aria-label": "Drug " + idx, autocomplete: "off", spellcheck: "false" });
+
+  const wrap = el("div", { class: "ac-wrap" });
+  const input = el("input", {
+    type: "text", id, placeholder: "Start typing a drug name", "aria-label": "Drug " + idx,
+    autocomplete: "off", spellcheck: "false",
+    role: "combobox", "aria-autocomplete": "list", "aria-expanded": "false", "aria-controls": id + "-list"
+  });
   if (value) input.value = value;
-  row.appendChild(input);
+  const list = el("ul", { class: "ac-list", id: id + "-list", role: "listbox", hidden: "" });
+  wrap.appendChild(input);
+  wrap.appendChild(list);
+  row.appendChild(wrap);
+
   const remove = el("button", { type: "button", class: "btn-icon", "aria-label": "Remove drug " + idx, title: "Remove" }, "Remove");
   remove.addEventListener("click", () => { row.remove(); renumberRows(); });
   row.appendChild(remove);
   rows.appendChild(row);
+
+  attachAutocomplete(input, list);
   return input;
 }
 

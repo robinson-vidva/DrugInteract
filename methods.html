@@ -44,6 +44,10 @@
       <section class="card">
         <h2>How a lookup works</h2>
         <ol>
+          <li><strong>Type-ahead suggestions.</strong> As you type, the input
+            offers suggestions from the RxNorm display-name list (fetched once per
+            session). Suggestions are a convenience only; you can type any name
+            freely and it is normalized on submit.</li>
           <li><strong>Normalize each drug.</strong> Your typed text is sent to the
             <a href="https://rxnav.nlm.nih.gov/" target="_blank" rel="noopener">RxNorm</a>
             REST API (<code>findRxcuiByString</code>). If there is no exact match,
