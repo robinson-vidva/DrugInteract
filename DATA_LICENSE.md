@@ -46,6 +46,18 @@ described below.
 - Used for informational background only; it never determines an interaction
   result. RxClass underlying sources include ATC, FDA SPL/DailyMed, and MED-RT.
 - RxClass has no CYP "substrate" classification; substrate is never inferred.
+- RxClass profile data also covers drug-disposition transporters (P-gp, OATP,
+  OCT, MATE, etc.), parsed from the same mechanism classes.
+
+## MedlinePlus (NLM)
+
+- Site: `https://medlineplus.gov/`
+- Provider: U.S. National Library of Medicine (NLM), National Institutes of Health
+- Status: **Public domain.**
+- Use: the drug profile panel links out (it does not fetch) to a MedlinePlus
+  search for plain-language patient drug information.
+- Required notice (NLM): courtesy of the U.S. National Library of Medicine; NLM
+  does not endorse this product.
 
 ## Attribution placement
 

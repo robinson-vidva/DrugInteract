@@ -6,7 +6,7 @@
   <title>Methods &amp; About - DrugInteract</title>
   <meta name="description" content="How DrugInteract works: data sources, normalization, matching, and limitations.">
   <!-- Bump the ?v= token on any styles.css change to bust browser and CDN caches on redeploy. -->
-  <link rel="stylesheet" href="styles.css?v=1.0.0">
+  <link rel="stylesheet" href="styles.css?v=1.1.0">
 </head>
 <body>
   <header class="site-header">
@@ -38,7 +38,7 @@
         <p class="lead">
           DrugInteract is a fully client-side static web page. There is no backend
           and no stored interaction dataset. Every lookup is a live query, from your
-          browser, to two free public APIs from the U.S. government.
+          browser, to free public APIs from the U.S. government (NLM and FDA).
         </p>
       </section>
 
@@ -63,8 +63,10 @@
             <em>Drug Interactions</em> (Section 7) text of <em>every</em> fetched
             label is searched, case-insensitively and on word boundaries, for the
             other drug's ingredient, generic, and brand names. The
-            <em>Contraindications</em> (Section 4) text is searched as a secondary
-            signal. The check is run in both directions.</li>
+            <em>Contraindications</em> (Section 4), <em>Boxed Warning</em>, and
+            <em>Warnings and Cautions</em> (Section 5) sections are searched as
+            secondary signals (some interactions are stated only there). The check
+            is run in both directions, and transient API errors are retried.</li>
           <li><strong>Report.</strong> Matches are shown with a quoted snippet and a
             citation to the specific FDA label (generic name, effective date, and a
             DailyMed link), plus a "found in N of M labels" count.</li>
@@ -81,8 +83,9 @@
         <h2>What the results mean</h2>
         <ul>
           <li><strong>Interaction mentioned.</strong> At least one drug's FDA label
-            names the other in its Drug Interactions (or Contraindications) text. The
-            snippet is the label's own wording, not a severity judgment.</li>
+            names the other in its Drug Interactions, Contraindications, Boxed
+            Warning, or Warnings text. The snippet is the label's own wording, not a
+            severity judgment.</li>
           <li><strong>No interaction mentioned.</strong> Labels were found and
             searched, and neither names the other. This does <em>not</em> mean the
             combination is safe (see limitations).</li>
@@ -121,7 +124,18 @@
           <li><strong>CYP enzymes</strong> - cytochrome P450 involvement. RxClass
             classifies drugs as CYP <em>inhibitors</em> and <em>inducers</em> only;
             it has <strong>no substrate classification</strong>, so substrate is
-            always shown as "not classified in RxClass" and never inferred.</li>
+            always shown as "not classified in RxClass" and never inferred. CYP
+            coverage is incomplete - some textbook roles (e.g. rifampin as a CYP3A4
+            inducer) are simply not coded in RxClass, in which case the line reads
+            "none recorded in RxClass".</li>
+          <li><strong>Transporters</strong> - drug-disposition transporter
+            involvement (P-glycoprotein, OATP, OCT, MATE, etc.), parsed from the same
+            RxClass mechanism data. Neurotransmitter transporters (a drug target, not
+            a disposition route) are excluded. Shown only when present; coverage is
+            incomplete and there is no transporter "substrate" class.</li>
+          <li><strong>Patient info</strong> - a link to the NLM
+            <a href="https://medlineplus.gov/" target="_blank" rel="noopener">MedlinePlus</a>
+            search for the drug, for plain-language consumer information.</li>
         </ul>
         <p>
           <strong>No inference.</strong> This profile is context, not an
@@ -180,9 +194,13 @@
             the public domain.</li>
           <li><strong>RxClass</strong> (RxNav REST API) -
             <code>https://rxnav.nlm.nih.gov/REST/rxclass/</code>. Source of the drug
-            profile panel (ATC, EPC, MoA, CYP classes). Courtesy of the U.S. National
-            Library of Medicine; NLM does not endorse this product. Public domain, no
-            license or key required.</li>
+            profile panel (ATC, EPC, MoA, CYP, transporter classes). Courtesy of the
+            U.S. National Library of Medicine; NLM does not endorse this product.
+            Public domain, no license or key required.</li>
+          <li><strong>MedlinePlus</strong> (NLM) - <code>https://medlineplus.gov/</code>.
+            Linked (not fetched) for plain-language patient drug information. Courtesy
+            of the U.S. National Library of Medicine; NLM does not endorse this product.
+            Public domain.</li>
           <li><strong>Code license:</strong> see <code>LICENSE</code> in the
             repository. <strong>Data license:</strong> see <code>DATA_LICENSE.md</code>.</li>
         </ul>
@@ -197,7 +215,7 @@
   <footer class="site-footer">
     <div class="wrap">
       <p>DrugInteract is a free, non-commercial, educational project. Not medical advice.</p>
-      <p>RxNorm and RxClass courtesy of the U.S. NLM (no endorsement). Label text from openFDA (U.S. FDA, public domain).</p>
+      <p>RxNorm, RxClass, and MedlinePlus courtesy of the U.S. NLM (no endorsement). Label text from openFDA (U.S. FDA, public domain).</p>
     </div>
   </footer>
 </body>

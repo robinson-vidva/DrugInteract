@@ -15,9 +15,9 @@ public U.S. government APIs (the NLM's RxNorm and RxClass, and the FDA's openFDA
 1. You enter two or more drugs (generic or brand names).
 2. Each name is normalized with **RxNorm** and resolved to its active ingredient.
 3. For each drug, the **openFDA Drug Label API** is queried by generic name.
-4. For each pair, the *Drug Interactions* (Section 7) and *Contraindications*
-   (Section 4) text of every returned label is searched, in both directions, for
-   the other drug's names.
+4. For each pair, the *Drug Interactions* (Section 7), *Contraindications*
+   (Section 4), *Boxed Warning*, and *Warnings* text of every returned label is
+   searched, in both directions, for the other drug's names.
 5. Results are reported as one of five clearly distinct states, with the label's
    own wording quoted and cited.
 
@@ -31,6 +31,11 @@ public U.S. government APIs (the NLM's RxNorm and RxClass, and the FDA's openFDA
 
 It does **not** grade severity (openFDA has no Major/Moderate/Minor) and does not
 give clinical recommendations.
+
+Separately, an informational **drug profile** panel shows each drug's family
+(ATC), pharmacologic class (EPC), mechanism (MoA), CYP-enzyme and transporter
+involvement (from RxClass), and a MedlinePlus patient-info link. It is context
+only and never affects the interaction result.
 
 ## Run locally
 
@@ -49,7 +54,7 @@ The **code** in this repository is licensed under the **MIT License** (see
 public-domain / open U.S. government sources:
 
 - **openFDA Drug Label API** - U.S. FDA, public domain.
-- **RxNorm and RxClass** (RxNav) - U.S. National Library of Medicine, public
+- **RxNorm, RxClass, and MedlinePlus** - U.S. National Library of Medicine, public
   domain; courtesy of the NLM, which does not endorse this product.
 
 See [`DATA_LICENSE.md`](DATA_LICENSE.md) for full data terms and required notices,

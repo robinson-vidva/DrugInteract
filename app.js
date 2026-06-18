@@ -8,6 +8,17 @@ const RXNORM = "https://rxnav.nlm.nih.gov/REST";
 const RXCLASS = "https://rxnav.nlm.nih.gov/REST/rxclass";
 const OPENFDA = "https://api.fda.gov/drug/label.json";
 
+// FDA label sections searched for the other drug's name. Section 7 is the
+// primary signal; the others are secondary context that still count as a label
+// mention (improves recall - interactions are sometimes only in a boxed warning
+// or warnings section).
+const LABEL_SECTIONS = [
+  { key: "section7", field: "drug_interactions",    name: "Drug Interactions (Section 7)",      primary: true },
+  { key: "contra",   field: "contraindications",    name: "Contraindications (Section 4)",      primary: false },
+  { key: "boxed",    field: "boxed_warning",        name: "Boxed Warning",                      primary: false },
+  { key: "warnings", field: "warnings_and_cautions", name: "Warnings and Cautions (Section 5)", primary: false }
+];
+
 const LABEL_CAP = 100;     // most-recent labels searched per drug
 const SNIPPET_RADIUS = 200; // chars of context on each side of a match
 const MIN_NAME_LEN = 3;     // shortest name allowed as a text matcher
@@ -81,10 +92,22 @@ async function mapLimit(items, limit, fn) {
   return results;
 }
 
-async function getJson(url) {
-  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// GET JSON with small backoff retries on transient failures (network error or
+// 5xx server error), up to 2 retries. 404 -> not-found sentinel. 429 -> distinct
+// rate-limit error, surfaced to the user rather than retried.
+async function getJson(url, attempt = 0) {
+  let res;
+  try {
+    res = await fetch(url, { headers: { "Accept": "application/json" } });
+  } catch (err) {
+    if (attempt < 2) { await delay(300 * (attempt + 1)); return getJson(url, attempt + 1); }
+    throw err;
+  }
   if (res.status === 404) return { __notFound: true };
   if (res.status === 429) { const e = new Error("RATE_LIMIT"); e.rateLimit = true; throw e; }
+  if (res.status >= 500 && attempt < 2) { await delay(300 * (attempt + 1)); return getJson(url, attempt + 1); }
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
@@ -147,7 +170,20 @@ async function normalizeDrug(input) {
         }
       }
     }
-    if (out.ingredientNames.length === 0) out.ingredientNames.push(out.input); // fallback
+    // Recovery: if no ingredient came back (e.g. an obsolete or remapped
+    // concept), ask RxNorm's history/status for the derived active ingredient(s).
+    if (out.ingredientNames.length === 0) {
+      try {
+        const h = await getJson(`${RXNORM}/rxcui/${out.rxcui}/historystatus.json`);
+        const derived = h && h.rxcuiStatusHistory && h.rxcuiStatusHistory.derivedConcepts;
+        const ings = (derived && derived.ingredientConcept) || [];
+        for (const c of ings) {
+          if (c.ingredientName) { out.ingredientNames.push(c.ingredientName); out.names.add(c.ingredientName.toLowerCase()); }
+          if (c.ingredientRxcui && !out.ingredientRxcui) out.ingredientRxcui = c.ingredientRxcui;
+        }
+      } catch (e) { /* best effort */ }
+    }
+    if (out.ingredientNames.length === 0) out.ingredientNames.push(out.input); // final fallback
   } catch (err) {
     out.error = err.message || "lookup failed";
     out.rateLimited = !!err.rateLimit;
@@ -207,10 +243,9 @@ async function fetchLabels(ingredientNames) {
         generic_name: of.generic_name || [],
         brand_name: of.brand_name || [],
         substance_name: of.substance_name || [],
-        effective_time: r.effective_time || "",
-        section7: pickText(r.drug_interactions),
-        contra: pickText(r.contraindications)
+        effective_time: r.effective_time || ""
       };
+      for (const sec of LABEL_SECTIONS) label[sec.key] = pickText(r[sec.field]);
       const prev = bySet.get(setId);
       if (!prev || (label.effective_time > prev.effective_time)) bySet.set(setId, label);
     }
@@ -235,9 +270,26 @@ async function fetchLabels(ingredientNames) {
 // imply interactions. RxClass has no CYP "Substrate" classes (only Inhibitor /
 // Inducer), so substrate is reported as not classified, never inferred.
 
-// Parse the byRxcui rows into family / pharm class / mechanism / CYP groups.
+// Drug-disposition transporters relevant to interactions (efflux/uptake). We
+// deliberately EXCLUDE neurotransmitter transporters (serotonin/dopamine/etc.),
+// which are pharmacodynamic targets, not disposition transporters.
+function isDispositionTransporter(name) {
+  return /(P-Glycoprotein|Breast Cancer Resistance Protein|Organic Anion Transporting Polypeptide|Organic Anion Transporter|Organic Cation Transporter|Multidrug and Toxin Extrusion|Bile Salt Export Pump)/i.test(name);
+}
+function transporterLabel(name) {
+  return name
+    .replace(/P-Glycoprotein/i, "P-gp")
+    .replace(/Breast Cancer Resistance Protein/i, "BCRP")
+    .replace(/Organic Anion Transporting Polypeptide\s*/i, "OATP")
+    .replace(/Organic Anion Transporter\s*/i, "OAT")
+    .replace(/Organic Cation Transporter\s*/i, "OCT")
+    .replace(/Multidrug and Toxin Extrusion(?: Transporter)?\s*/i, "MATE")
+    .replace(/Bile Salt Export Pump/i, "BSEP");
+}
+
+// Parse the byRxcui rows into family / pharm class / mechanism / CYP / transporters.
 function extractProfile(rows) {
-  const profile = { atc: [], epc: [], moa: [], cypInhibitor: [], cypInducer: [] };
+  const profile = { atc: [], epc: [], moa: [], cypInhibitor: [], cypInducer: [], transporters: [] };
   const seen = new Set();
   const add = (bucket, value, key) => {
     if (!value || seen.has(key)) return;
@@ -272,6 +324,8 @@ function extractProfile(rows) {
         const label = "CYP" + cyp[1].toUpperCase();
         if (/Inhibitor/i.test(cyp[2])) add(profile.cypInhibitor, label, "cypi|" + label);
         else add(profile.cypInducer, label, "cypd|" + label);
+      } else if (isDispositionTransporter(name)) {
+        add(profile.transporters, transporterLabel(name), "tr|" + name);
       } else {
         add(profile.moa, name, "moa|" + name);
       }
@@ -285,11 +339,12 @@ function extractProfile(rows) {
 }
 
 // Fetch a drug's RxClass profile by its ingredient RxCUI. Cached per RxCUI.
+// Off the interaction critical path.
 async function fetchProfile(rxcui) {
   if (!rxcui) return { empty: true };
   if (profileCache.has(rxcui)) return profileCache.get(rxcui);
 
-  const result = { atc: [], epc: [], moa: [], cypInhibitor: [], cypInducer: [], error: null, rateLimited: false };
+  const result = { atc: [], epc: [], moa: [], cypInhibitor: [], cypInducer: [], transporters: [], error: null, rateLimited: false };
   try {
     const d = await getJson(`${RXCLASS}/class/byRxcui.json?rxcui=${encodeURIComponent(rxcui)}`);
     if (!d.__notFound) {
@@ -303,6 +358,13 @@ async function fetchProfile(rxcui) {
 
   profileCache.set(rxcui, result);
   return result;
+}
+
+// NLM MedlinePlus patient-info search URL for a drug name (link only -
+// MedlinePlus is not browser-fetchable cross-origin, but a hyperlink is fine).
+function medlinePlusUrl(name) {
+  return "https://vsearch.nlm.nih.gov/vivisimo/cgi-bin/query-meta?query=" +
+    encodeURIComponent(name) + "&v%3Aproject=medlineplus";
 }
 
 // ---------- matching ----------
@@ -358,37 +420,39 @@ function makeSnippet(text, index, matchLen) {
   return escapeHtml(before) + "<mark>" + escapeHtml(matched) + "</mark>" + escapeHtml(after);
 }
 
-// Search one drug's labels (source) for the other drug's names (matchers).
-// Returns directional finding across ALL labels.
+// Search one drug's labels (source) for the other drug's names (matchers),
+// across every LABEL_SECTION, over ALL labels. Returns a per-section finding.
 function searchDirection(source, matchers) {
   const out = {
     searchable: false,
     labelsChecked: source.labels.length,
     totalOnFile: source.total,
-    s7Matches: 0,
-    contraMatches: 0,
-    s7: null,      // { snippet, full, label }
-    contra: null   // { snippet, full, label }
+    sections: {} // sec.key -> { count, snippet, full, label } or null
   };
-  for (const label of source.labels) {
-    if (label.section7 || label.contra) out.searchable = true;
+  for (const sec of LABEL_SECTIONS) out.sections[sec.key] = null;
 
-    if (label.section7) {
-      const hit = firstMatch(label.section7, matchers);
+  for (const label of source.labels) {
+    let hasText = false;
+    for (const sec of LABEL_SECTIONS) {
+      const text = label[sec.key];
+      if (!text) continue;
+      hasText = true;
+      const hit = firstMatch(text, matchers);
       if (hit) {
-        out.s7Matches++;
-        if (!out.s7) out.s7 = { snippet: makeSnippet(label.section7, hit.index, hit.name.length), full: label.section7, label };
+        if (!out.sections[sec.key]) {
+          out.sections[sec.key] = { count: 0, snippet: makeSnippet(text, hit.index, hit.name.length), full: text, label };
+        }
+        out.sections[sec.key].count++;
       }
     }
-    if (label.contra) {
-      const hit = firstMatch(label.contra, matchers);
-      if (hit) {
-        out.contraMatches++;
-        if (!out.contra) out.contra = { snippet: makeSnippet(label.contra, hit.index, hit.name.length), full: label.contra, label };
-      }
-    }
+    if (hasText) out.searchable = true;
   }
   return out;
+}
+
+// Did this direction find the other drug in any label section?
+function dirHasMention(dir) {
+  return LABEL_SECTIONS.some(sec => dir.sections[sec.key]);
 }
 
 // ---------- evaluation ----------
@@ -417,8 +481,7 @@ function evaluatePair(a, b) {
     return { state: STATE.NOLABEL, a, b, aFindsB, bFindsA };
   }
 
-  const anyMention =
-    aFindsB.s7 || aFindsB.contra || bFindsA.s7 || bFindsA.contra;
+  const anyMention = dirHasMention(aFindsB) || dirHasMention(bFindsA);
 
   return {
     state: anyMention ? STATE.MENTION : STATE.NOMENTION,
@@ -444,15 +507,12 @@ function dailyMedLink(label) {
   return null;
 }
 
-function renderFinding(sourceDrug, targetDrug, dir, opts) {
-  // opts.section: "s7" | "contra"
-  const found = opts.section === "s7" ? dir.s7 : dir.contra;
+function renderFinding(sourceDrug, targetDrug, dir, sec) {
+  const found = dir.sections[sec.key];
   if (!found) return null;
-  const count = opts.section === "s7" ? dir.s7Matches : dir.contraMatches;
-  const sectionName = opts.section === "s7" ? "Drug Interactions (Section 7)" : "Contraindications (Section 4)";
 
-  const node = el("div", { class: opts.section === "s7" ? "finding" : "finding secondary" });
-  if (opts.section === "contra") node.appendChild(el("div", { class: "sec-tag" }, "Secondary signal"));
+  const node = el("div", { class: sec.primary ? "finding" : "finding secondary" });
+  if (!sec.primary) node.appendChild(el("div", { class: "sec-tag" }, "Secondary signal"));
 
   node.appendChild(el("div", { class: "dir" },
     `${titleCase(sourceDrug.norm.input)}'s FDA label mentions ${titleCase(targetDrug.norm.input)}`));
@@ -460,7 +520,7 @@ function renderFinding(sourceDrug, targetDrug, dir, opts) {
   const label = found.label;
   const gen = (label.generic_name[0] || sourceDrug.norm.ingredientNames[0] || "label");
   const meta = el("div", { class: "meta" });
-  let metaText = `In ${sectionName}. Found in ${count} of ${dir.labelsChecked} label(s) checked`;
+  let metaText = `In ${sec.name}. Found in ${found.count} of ${dir.labelsChecked} label(s) checked`;
   if (dir.totalOnFile > dir.labelsChecked) metaText += ` (newest ${dir.labelsChecked} of ${dir.totalOnFile} on file)`;
   metaText += `. Source label: ${gen}, effective ${formatDate(label.effective_time)}.`;
   meta.appendChild(document.createTextNode(metaText));
@@ -474,7 +534,7 @@ function renderFinding(sourceDrug, targetDrug, dir, opts) {
   node.appendChild(el("p", { class: "snippet", html: found.snippet }));
 
   const details = el("details", { class: "full" });
-  details.appendChild(el("summary", null, "Show full " + (opts.section === "s7" ? "Section 7" : "Section 4") + " text"));
+  details.appendChild(el("summary", null, "Show full " + sec.name + " text"));
   details.appendChild(el("pre", null, found.full));
   node.appendChild(details);
 
@@ -543,12 +603,11 @@ function renderPair(result) {
   }
 
   if (result.state === STATE.MENTION) {
-    const findings = [
-      renderFinding(a, b, result.aFindsB, { section: "s7" }),
-      renderFinding(b, a, result.bFindsA, { section: "s7" }),
-      renderFinding(a, b, result.aFindsB, { section: "contra" }),
-      renderFinding(b, a, result.bFindsA, { section: "contra" })
-    ].filter(Boolean);
+    const findings = [];
+    for (const sec of LABEL_SECTIONS) {
+      const fa = renderFinding(a, b, result.aFindsB, sec); if (fa) findings.push(fa);
+      const fb = renderFinding(b, a, result.bFindsA, sec); if (fb) findings.push(fb);
+    }
     for (const f of findings) pair.appendChild(f);
     pair.appendChild(el("p", { class: "caveat" },
       "This reflects only the label's own wording. openFDA does not grade severity. " +
@@ -561,7 +620,8 @@ function renderPair(result) {
   if (result.aFindsB.searchable) checked.push(`${result.aFindsB.labelsChecked} label(s) for ${titleCase(a.norm.input)}`);
   if (result.bFindsA.searchable) checked.push(`${result.bFindsA.labelsChecked} label(s) for ${titleCase(b.norm.input)}`);
   pair.appendChild(el("p", null,
-    `Searched ${checked.join(" and ")}; neither names the other in its Drug Interactions or Contraindications text.`));
+    `Searched ${checked.join(" and ")}; neither names the other in its Drug Interactions, ` +
+    `Contraindications, Boxed Warning, or Warnings text.`));
 
   // Partial-coverage note when only one side could be searched.
   if (!result.aFindsB.searchable || !result.bFindsA.searchable) {
@@ -627,7 +687,7 @@ function buildProfilesCard(drugs) {
   return { box, slots };
 }
 
-function fillProfile(body, profile) {
+function fillProfile(body, profile, norm) {
   body.innerHTML = "";
   if (profile.rateLimited) {
     body.appendChild(el("p", { class: "hint" }, "Profile rate limited (HTTP 429) - wait and try again."));
@@ -669,6 +729,22 @@ function fillProfile(body, profile) {
   }
   cypRow.appendChild(cypVal);
   body.appendChild(cypRow);
+
+  // Drug-disposition transporters (P-gp, OATP, etc.). Shown only when present;
+  // coverage is incomplete (RxClass has no transporter "substrate" class either).
+  if (profile.transporters && profile.transporters.length) {
+    row("Transporters", profile.transporters.join("; "));
+  }
+
+  // Patient-facing info: a link to the NLM MedlinePlus search for this drug.
+  if (norm) {
+    const r = el("div", { class: "profile-row" });
+    r.appendChild(el("span", { class: "profile-label" }, "Patient info"));
+    const v = el("span", { class: "profile-value" });
+    v.appendChild(el("a", { href: medlinePlusUrl(norm.ingredientNames[0] || norm.input), target: "_blank", rel: "noopener" }, "Search MedlinePlus (patient info)"));
+    r.appendChild(v);
+    body.appendChild(r);
+  }
 }
 
 // ---------- autocomplete ----------
@@ -924,7 +1000,7 @@ async function run(evt) {
       mapLimit(recognized, MAX_CONCURRENCY, async (d) => {
         const profile = await fetchProfile(d.norm.ingredientRxcui || d.norm.rxcui);
         const body = slots.get(d);
-        if (body) fillProfile(body, profile);
+        if (body) fillProfile(body, profile, d.norm);
       }).catch(() => { /* profiles are best-effort; ignore */ });
     }
 
